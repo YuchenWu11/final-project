@@ -1,0 +1,316 @@
+---
+title: Analyzing the Result of the 2019 Canadian Federal Election if EVERYONE Votes
+  using MRP model
+author: "Yuchen Wu"
+date: "Dec 20, 2020"
+
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    latex_engine: xelatex
+---
+
+# Abstract
+Cnandian Federal Election is one of the most important events which is related to every citizen in Canada. The rule of Canadian Federal Election is that the candidate who wins the most votes in a constituency is elected to represent that riding. But not all citizens would like to vote in the election. In this report, we performed Multilevel Regression Post-stratification technique, along with logistic modeling and random intercept modeling to predict the potential different election results between everyone votes and part of population votes based on 2019 Canadian Election Study data and General Social Survey (GSS) generated in 2016. The report finally concludes that even though every single citizens' votes counted in 2019 Canadian Federal Election, the voting result was less likely to change.
+
+# Keywords 
+2019 Canadian Federal Election, Logistic Regression model, Multilevel Regression Post-Stratification, Observational study
+
+# Introduction
+The 43rd 2019 Canadian Federal Election was held on October 21, 2019(Qualter& Wilson , 2006). In the Canadian Parliament, the House of Commons is democratically elected and there are now 338 seats in the House of Commons, representing all constituencies in the country(Qualter& Wilson , 2006). The nationals elect candidates for their constituency, thereby indirectly electing the prime minister and cabinet(Qualter& Wilson , 2006).
+
+Liberal party held 157 seats and won the election in 2019 Canadian Federal Election. The result is shown in Table 1 below:
+
+```{r, echo=FALSE, message = FALSE, warning = FALSE}
+library(tidyverse)
+library(lme4)
+library(knitr)
+library(broom)
+library(janitor)
+library(ggpubr)
+
+# Loading in the cleaned survey Data
+survey_data_raw <- read_csv("surveydata.csv")
+
+# Loading in the cleaned census Data
+census_data_raw <- read_csv("censusdata.csv")
+census_data_dict_raw <- read_lines("censusdata_dict.txt", skip = 18) 
+census_data_labels_raw <- read_file("censusdata_labels.txt")
+
+kable(data.frame('Party'=c('Liberal', 'Conservative', 'Bloc Quebecois', 'New Democratic', 'Green', 'People\'s'), 'Seats Won'=c('157', '121','32', '24','3','0'), 'Votes' = c('6018728', '6239227', '1387030', '2903722', '1189607', '294092'), 'Percentage'=c('33.12%', '34.34%', '7.63%', '15.98%', '6.55%', '1.62%')), caption = 'The Result of 2019 Canadian Federal Election')
+```
+
+We notice that total number of voters seems far less than the number of Canadian citizens. It's roughly calculated that the there are approximately 16 millions of voters that had voted in 2019, compared to approximately 36 millions of citizens across Canada, according to 2016 census(2016 Census of Population). Although in reality, it's impossible for every citizen older than 18 years old to vote for the election, we are still interested that whether or not the result will change in this case.
+
+In this report, we build a MRP model based on 2019 Canadian Election Study data(CES) and General Social Survey(GSS) generated in 2016 to predict the difference in results assuming everyone would like to voted for election. In the methodology section(Section 2), CES and GSS dataset were introduced, including data components and data anomalies, etc. In the results part(Section 3), the results obtained in the previous part with the actual results was compared to analyze the differences and reasons. In the discussion part(Section 4), summary, analysis of the above experiments and final conclusions will be obtained.
+
+
+# Data
+We obtained the data set 2019 Canadian Election Study data(CES) as survey data. General Social Survey on Canadians at Work and Home in 2016, which is a sample survey with cross-sectional design and conducted from August 2nd to December 23rd 2016, is treated as census data in the study. In this observational study, the target population for this data is all people who are eligible to vote, i.e., Canadian citizens over the age of 18 or order. The target frame is all people who vote for 2019 Federal Election. 
+
+The detailed information and diverse variables of each respondent in the survey data make it a good source for multilevel regression post-stratification analysis. Another advantage of the survey is that the size of data set is not small, with a large number of observations and a large number of variables. However, the census data is generated in 2016 which was not the latest information. Thus, the model we built may not be perfectly accurate. 
+
+We selected variable $age\_group$ and thirteen other variables from the data set to do the analysis. $age\_group$ is a categorical variable representing the age of a respondent. $sex$ is a categorical dummy variable. Education level is a categorical variable and represents the education background of a respondent. Income level is a categorical variable, represents the income of a voter. Province is a categorical variable representing the geometric location of respondents' residence. Vote Choice is a categorical variable meaning which party the voter is willing to choose. The first six line of observations with their information is shown in Table 2. Those variables were selected because they are likely to influence the voting results. In this section, we filtered the individuals over the age of 18 that are eligible to vote. The total variables in our dataframe is 14. 
+
+
+
+
+From the first two plots below, we notice that most people are female in this survey with income less than $\$100,000$. But generally speaking, the difference of number of male and female is not large, and income level is reasonable distributed.
+
+```{r, echo=FALSE}
+fig1 <- ggplot(survey_data,
+       aes(sex)) +
+  geom_bar(fill = "grey", colour = "black")+
+  geom_text(stat="count", aes(label=stat(count)), vjust=-0.5)
+fig2 <- ggplot(survey_data,
+       aes(income_level)) +
+  geom_bar(fill = "grey", colour = "black")+
+  geom_text(stat="count", aes(label=stat(count)), vjust=-0.5)+
+  theme(axis.text.x = element_text(angle = 35))
+ggarrange(fig1, fig2, nrow=1)
+```
+
+From the another two plots, we conclude that most respondents are 55 to 64 years old, followed by those from 35 to 44 years old. The least number of group are those aged 75 years and older. It's obvious that most of people in this data are from Ontario and Quebec city.   
+
+```{r, echo = FALSE}
+fig3 <- ggplot(survey_data,
+       aes(age_group)) +
+  geom_bar(fill = "grey", colour = "black")+
+  geom_text(stat="count", aes(label=stat(count)), vjust=-0.5)+
+  theme(axis.text.x = element_text(angle = 35))
+fig4 <- ggplot(survey_data,
+       aes(province)) +
+  geom_bar(fill = "grey", colour = "black")+
+  geom_text(stat="count", aes(label=stat(count)), vjust=-0.5)+
+  theme(axis.text.x = element_text(angle = 35))
+ggarrange(fig3, fig4, nrow=1)
+```
+
+
+# Model
+In this report, we are interested in predicting the popular vote outcome of the 2019 Canadian federal election if everyone votes. To do this we built seven binomial logistic model based on the 2019 Canadian Election Study data(survey data). Then, we applied models to the census data which we obtained from the General Social Survey on Canadians to make the prediction. In the following sub-sections, we will introduce our model and the post-stratification strategies specifically. Also, I will present the model justification procedures.
+
+## Model Specifics
+In the sample model, we would be using RStudio and fitting data into multilevel logistic regressions to model the probability of supporting different parities. The outcome of each model is either voting for the party or not, which is binary, so logistic regression is the most appropriate model. Level 2 models would also be built account for different intercepts, and the random intercept model would depend on province. There are five predictor variables in total, including age group, gender, education, province and income. Since some of independent variables are categorical, dummy variable coding would be used in model fitting. The general formula is shown below:
+
+$$
+\log{(\frac{\hat{p_i}}{1-\hat{p_i}})} = \hat{\beta_0}+\hat{\beta_1}X_{Age,i}+\hat{\beta_2}X_{Sex,i}+\hat{\beta_3}X_{Education,i}+\hat{\beta_4}X_{Income,i}+\hat{\epsilon}_{Province}
+$$
+
+$log(\frac{\hat{p}}{1-\hat{p}})$ represents the log odds of probability of voting for party $i$. $\hat{p_i}$ represents the voters estimated probability of voting for party $i$. $\beta_0$ represents the intercept parameter, which shows the log odds of voting for party $i$ when age group is 25 or less; gender is female; education is no schooling; and household income is \$25,000 or less. For other $\beta$s, $\beta_1$, $\beta_2$, $\beta_3$ and $\beta_4$, they all represent the slope parameters. Each of them shows the change in log odds of voting for party $i$ when the x corresponding to $\beta$ changes by 1 in dummy variable coding. Lastly, $\hat{\epsilon}_{Province}$ is the random interception model predictor that used to correct the impact of party preferences in difference provinces. The range for $X_{Age}$ is from 0-6, range for $X_{Education}$ is from 0-7, and range for $X_{Income}$ is from 0-5. For each individual party, separate models will be applied, thus the coefficients will also vary, i.e., $\hat{\beta_1}$, $\hat{\beta_2}$, $\hat{\beta_3}$, $\hat{\beta_4}$ and $\hat{\epsilon}_{Province}$ will be different in different models.
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+model_liberal <- glmer(vote_liberal ~ age_level + sex + edu + income + (1|province), family = binomial, data = survey_data)
+model_conserv <- glmer(vote_conserv ~ age_level + sex + edu + income + (1|province), family = binomial, data = survey_data)
+model_ndp <- glmer(vote_ndp ~ age_level + sex + edu + income + (1|province), family = binomial, data = survey_data)
+model_bq <- glmer(vote_bq ~ age_level + sex + edu + income + (1|province), family = binomial, data = survey_data)
+model_green <- glmer(vote_bq ~ age_level + sex + edu + income + (1|province), family = binomial, data = survey_data)
+model_people <- glmer(vote_bq ~ age_level + sex + edu + income + (1|province), family = binomial, data = survey_data)
+model_other <- glmer(vote_bq ~ age_level + sex + edu + income + (1|province), family = binomial, data = survey_data)
+```
+
+Specifically, the model for each party are shown below:
+
+1. Logistic regression model of Liberal Party:
+$$
+\log{(\frac{\hat{p_1}}{1-\hat{p_1}})} = -2.988+0.043X_{Age}-0.037X_{Male}+0.893X_{Education}+0.092X_{Income}+\hat{\epsilon_1}_{Province} 
+$$
+
+Education plays an important role in this model, and female are more likely to vote for Liberal Party than male. 
+
+2. Logistic model of Conservative Party: 
+
+$$
+\log{(\frac{\hat{p_2}}{1-\hat{p_2}})} = -2.479+0.138X_{Age}+0.474X_{Male}-0.133X_{Education}+0.284X_{Income}+\hat{\epsilon_2}_{Province} 
+$$
+
+Male is more likely to vote Conservative Party than female. And an old respondent with low education and high income prefers to vote for Conservational Party. 
+
+3. Logistic model of Bloc Quebecois: 
+
+$$
+\log{(\frac{\hat{p_3}}{1-\hat{p_3}})} = -21.983+0.198X_{Age}+0.230X_{Male}-0.009X_{Education}+0.102X_{Income}+\hat{\epsilon_3}_{Province}  
+$$
+
+The intercept is pretty low for this model, meaning that it is less likely for a respondent to vote for Bloc Quebecois. Generally, a old male who has low education level and high income are more likely to vote for this party. 
+
+4. Logistic model of New Democratic Party: *
+
+$$ 
+\log{(\frac{\hat{p_4}}{1-\hat{p_4}})} = -0.003-0.391X_{Age}-0.671X_{Male}+0.017X_{Education}-0.219X_{Income}+\hat{\epsilon_4}_{Province} 
+$$
+
+Based on this model, young female with high education and low income has a higher preference to vote for New Democratic Party
+
+The formula of level 2 model, "random intercept model", is shown below:
+$$ \beta_{0i}=r_{00} + r_{01}  W_{i} + u_{0i} $$
+$\beta_{0i}$ is the predicated intercept from level 1 model, and each value for i corresponds to a value in the cell variable. $r_{00}$ is the intercept parameter of level 2 model. $r_{01}$ is the slope parameter. $W_{i}$ is the independent variable that influencing state. Lastly, $u_{0i}$ is the random error term.
+
+
+## Post-Stratification 
+
+In this section, we would talk about our post-stratification process based on how Canadian Federal Election works in real life. Post-Stratification is the practice of partitioning data into thousands of demographic cells, and final estimation are calculated by the weighted estimate for each cell. This technique could reduce the bias from non-probability based sampling. To begin our post-stratification process, for each state, we would partition the data into demographic cells by sex, income, education, province and age group. Within each province, the post-stratification formula would be used to calculate the probability of voting for Donald Trump. $\hat{y_{ij}}^{PS}=\frac{\Sigma N_{ij} \hat{y}_{ij}}{\Sigma N_{ij}}$, where in our study, $\hat{y_{ij}}^{PS}$ is the probability of voting for party $i$ in a particular province $j$; $\hat{y}_{ij}$ is the estimate of probability of voting for party $i$ in province $j$; $N_{ij}$ is the number of voters of the $i^{th}$ cell based of chosen demographics. Next, we would perform a summary showing the probability of voting for party $i$ for each state. Thus, since our model is based on probability of voting for party $i$, if the probability of voting greater than 0.5 in a state, then we claim that party $i$ wins all of the electoral votes offered by that province, and vice versa. Lasting, by summing up all of the electoral votes received by party $i$ , the party who has most votes would be the winner. 
+
+```{r, echo=FALSE, warning = FALSE, message = FALSE}
+# calculating logistic estimator and final outcome
+
+census_new <- census_data %>% 
+  select(province, age_level, sex, edu, income) %>% 
+  count(province, age_level, sex, edu, income) %>% 
+  group_by(province, age_level, sex, edu, income)
+
+# estimated voting percentage for liberal party
+census_new$log_est_liberal <-
+  model_liberal %>%
+  predict(newdata = census_new)
+
+census_new$est_liberal <-
+  exp(census_new$log_est_liberal)/(1+exp(census_new$log_est_liberal))
+
+result1 <- census_new %>%
+  ungroup() %>% 
+  mutate(predict_liberal = est_liberal*n) %>%
+  summarise(liberal_win = sum(predict_liberal)/sum(n))
+
+# estimated voting percentage for conservative party
+census_new$log_est_conserv <-
+  model_conserv %>%
+  predict(newdata = census_new)
+
+census_new$est_conserv <-
+  exp(census_new$log_est_conserv)/(1+exp(census_new$log_est_conserv))
+
+result2 <- census_new %>%
+  ungroup() %>% 
+  mutate(predict_conserv = est_conserv*n) %>%
+  summarise(conserv_win = sum(predict_conserv)/sum(n))
+
+# estimated voting percentage for new democratic party
+census_new$log_est_ndp <-
+  model_ndp %>%
+  predict(newdata = census_new)
+
+census_new$est_ndp <-
+  exp(census_new$log_est_ndp)/(1+exp(census_new$log_est_ndp))
+
+result3 <- census_new %>%
+  ungroup() %>% 
+  mutate(predict_ndp = est_ndp*n) %>%
+  summarise(ndp_win = sum(predict_ndp)/sum(n))
+
+# estimated voting percentage for bloc quebecois party
+census_new$log_est_bq <-
+  model_bq %>%
+  predict(newdata = census_new)
+
+census_new$est_bq <-
+  exp(census_new$log_est_bq)/(1+exp(census_new$log_est_bq))
+
+result4 <- census_new %>%
+  ungroup() %>% 
+  mutate(predict_bq = est_bq*n) %>%
+  summarise(bq_win = sum(predict_bq)/sum(n))
+
+# estimated voting percentage for green party
+census_new$log_est_green <-
+  model_green %>%
+  predict(newdata = census_new)
+
+census_new$est_green <-
+  exp(census_new$log_est_green)/(1+exp(census_new$log_est_green))
+
+result5 <- census_new %>%
+  ungroup() %>% 
+  mutate(predict_green = est_green*n) %>%
+  summarise(green_win = sum(predict_green)/sum(n))
+
+# estimated voting percentage for people's party
+census_new$log_est_people <-
+  model_people %>%
+  predict(newdata = census_new)
+
+census_new$est_people <-
+  exp(census_new$log_est_people)/(1+exp(census_new$log_est_people))
+
+result6 <- census_new %>%
+  ungroup() %>% 
+  mutate(predict_people = est_people*n) %>%
+  summarise(people_win = sum(predict_people)/sum(n))
+
+# estimated voting percentage for other parties
+census_new$log_est_other <-
+  model_other %>%
+  predict(newdata = census_new)
+
+census_new$est_other <-
+  exp(census_new$log_est_other)/(1+exp(census_new$log_est_other))
+
+result7 <- census_new %>%
+  ungroup() %>% 
+  mutate(predict_other = est_other*n) %>%
+  summarise(other_win = sum(predict_other)/sum(n))
+```
+
+# Results
+
+Using logistic regression model and post-stratification technique, we are able to estimate the percentage of voters that vote for each party. The result of election is shown in the Table 1.
+```{r, echo=FALSE}
+kable(data.frame('Liberity'=result1, 
+                 'Conservation'=result2,
+                 'Democracy'=result3,
+                 'Bloc quebecois'=result4,
+                 'Others'=result7),
+      caption = 'The result of 2020')
+```
+
+From the results, it's estimated that $27.06\%$ of voters would vote for the Liberal Party, however, the Conservative Party has the highest support rate, taking $27.20\%$ of total votes. New Democratic party also has a support rate at $14.57\%$, followed by the Green party, Bloc Quebecois, and the People's party. Only $0.70\%$ of voters would consider other parties. 
+
+Compared with the result in reality, the result is different. However, the difference is minor and Conseravtive Party also get the lead in percentage. So we still conclude that it is less likely to change the final result of election. 
+
+# Discussion
+
+Election analysis need not only to be accurate but also relevant, time-efficient, and cost-efficient. In this report, we select the sample data from the survey about the vote for the 2019 Canadian Federal Election. Our census data is a subset of the data of the 2016 General Social Survey. We use the sample data and build Multilevel Regression models using a binomial family to predict the probability to vote for party $i$. Then we use the model built on the sample data to do the post-stratification based on province on census data, splitting into cells based o gender, income, education, and age group. 
+
+The predicted result shows that Conservative party has more supporter ratio compared to the Liberal party, at $27.20\%$ to $27.06\%.$ In conclusion, this model predicts that if all citizens had voted in 2019, the result was still less likely to change on a large scale since there is only small difference between supporting rates of Liberal Party and Conservation Party. Two largest parties, Liberal and Conservative would still lead in popular votes, and electoral seats won't change significantly even though everyone could have voted.
+
+
+## Weaknesses
+
+Generally, there are three weaknesses in our model. First of all, the survey data we used to build model was generated around May, 2019 and census data was generated in 2016, which was not the latest data before election. It is not difficult to predict that there could be a large number of people will not voted for the exact same party as they mentioned when taking the survey.  Moreover, there might exist bias in survey data and census data, especially for the cells with less population when using post-stratification. Besides, our computing power are limited, so we cannot build more complex models. 
+
+## Next Steps
+
+Our model will be more accurate if we can get the latest data before election. Moreover, more techniques could be performed, for example, using Bayesian MRP model, could produce better results. Last but not least, there is a caveat in the model specific part that would allow for some new technique.
+
+# Appendix
+A link to github repository: https://github.com/YuchenWu11/final-project
+
+# References
+1. 2016 Census of Population – Data products, Statistics Canada, 
+     https://www12.statcan.gc.ca/census-recensement/2016/dp-pd/index-eng.cfm
+2. Alboukadel Kassambara (2020). ggpubr: 'ggplot2' Based Publication
+     Ready Plots. R package version 0.4.0.
+     https://CRAN.R-project.org/package=ggpubr
+3. David Robinson, Alex Hayes and Simon Couch (2020). broom: Convert
+     Statistical Objects into Tidy Tibbles. R package version 0.7.2.
+     https://CRAN.R-project.org/package=broom
+4. Douglas Bates, Martin Maechler, Ben Bolker, Steve Walker (2015).
+     Fitting Linear Mixed-Effects Models Using lme4. Journal of
+     Statistical Software, 67(1), 1-48. doi:10.18637/jss.v067.i01.
+5. Qualter, T. H., Wilson, J. M. (2006, February 7). Canadian Electoral  Systems.
+   Retrieved December 09, 2020, from     
+   https://www.thecanadianencyclopedia.ca/en/article/electoral-systems
+6. Sam Firke (2020). janitor: Simple Tools for Examining and Cleaning
+     Dirty Data. R package version 2.0.1.
+     https://CRAN.R-project.org/package=janitor
+7. Wickham et al., (2019). Welcome to the tidyverse. Journal of Open
+     Source Software, 4(43), 1686, https://doi.org/10.21105/joss.01686
+8. Xavier Robin, Natacha Turck, Alexandre Hainard, Natalia Tiberti,
+     Frédérique Lisacek, Jean-Charles Sanchez and Markus Müller (2011).
+     pROC: an open-source package for R and S+ to analyze and compare ROC
+     curves. BMC Bioinformatics, 12, p. 77.  DOI: 10.1186/1471-2105-12-77
+     <http://www.biomedcentral.com/1471-2105/12/77/>
+9. Yihui Xie (2020). knitr: A General-Purpose Package for Dynamic Report
+     Generation in R. R package version 1.30.
+
